@@ -39,8 +39,8 @@ Este projeto realiza análise estatística completa dos resultados históricos d
 
 ### Instalação
 ```bash
-# Navegue até o diretório do projeto
-cd /home/adorigao/projetos/Projecao_Loteria
+# Clone o repositório
+git clone https://github.com/andersonlpd/Projecao_Loteria.git
 
 # Instale as dependências
 pip install -r requirements.txt
@@ -61,7 +61,6 @@ python megasena_analyzer.py
 Projecao_Loteria/
 ├── megasena_analyzer.py      # Análise principal e predições
 ├── menu.py                   # Interface interativa
-├── config.py                 # Configurações do projeto
 ├── requirements.txt          # Dependências do projeto
 └── README.md                 # Esta documentação
 ```
@@ -161,5 +160,3 @@ Sugestões de melhorias são bem-vindas! Especialmente:
 Este projeto é de código aberto para fins educacionais.
 
 ---
-
-**Desenvolvido com 💙 para análise estatística educacional da Mega-Sena**
