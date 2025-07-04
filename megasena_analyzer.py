@@ -767,10 +767,14 @@ class MegaSenaAnalyzer:
         ARQUITETURA DO MODELO:
         ============================================================================
         
-        1. JANELA TEMPORAL (Lookback Window):
-           - Usa os últimos 10 sorteios como features de entrada
-           - Cada sorteio tem 6 números = 10 × 6 = 60 features por amostra
-           - Janela deslizante ao longo de todo o histórico
+        1. JANELA TEMPORAL ADAPTATIVA (Lookback Window):
+           - Usa uma janela que se adapta ao total de sorteios disponíveis
+           - Muitos dados (≥100): 15 sorteios como features
+           - Dados médios (≥50): 10 sorteios como features  
+           - Poucos dados (≥20): 5 sorteios como features
+           - Muito poucos dados (<20): 3 sorteios ou 1/4 do total
+           - Cada sorteio tem 6 números = janela × 6 features por amostra
+           - Janela deslizante ao longo de todo o histórico disponível
         
         2. MÚLTIPLOS MODELOS:
            - Treina 6 modelos separados (um para cada posição)
@@ -778,9 +782,10 @@ class MegaSenaAnalyzer:
            - Abordagem Multi-Output individual
         
         3. DADOS DE TREINO:
-           - Features: 10 sorteios anteriores [60 números]
+           - Features: janela_temporal sorteios anteriores [janela × 6 números]
            - Target: Próximo sorteio [6 números]
-           - Exemplo: Sorteios 1-10 → Sorteio 11, Sorteios 2-11 → Sorteio 12, etc.
+           - Exemplo: Sorteios 1-janela → Sorteio (janela+1), etc.
+           - Utiliza TODOS os sorteios disponíveis para treinamento
         
         ============================================================================
         PROCESSO DE TREINAMENTO:
@@ -792,45 +797,73 @@ class MegaSenaAnalyzer:
         
         # === PREPARAÇÃO DOS DADOS ===
         # Estruturas para armazenar features (X) e targets (y)
-        features = []  # Lista de arrays com features (10 sorteios × 6 números)
+        features = []  # Lista de arrays com features (janela_temporal sorteios × 6 números)
         targets = []   # Lista de arrays com targets (6 números do próximo sorteio)
         
         print(f"Preparando dados de treino...")
         print(f"Total de sorteios disponíveis: {len(self.df)}")
         
+        # === CÁLCULO DA JANELA TEMPORAL ADAPTATIVA ===
+        # Usa uma janela que se adapta ao número total de sorteios disponíveis
+        total_sorteios = len(self.df)
+        
+        if total_sorteios >= 100:
+            # Para muitos dados: usa janela de 15 sorteios para capturar mais padrões
+            janela_temporal = 15
+        elif total_sorteios >= 50:
+            # Para dados médios: usa janela de 10 sorteios (padrão original)
+            janela_temporal = 10
+        elif total_sorteios >= 20:
+            # Para poucos dados: usa janela de 5 sorteios
+            janela_temporal = 5
+        else:
+            # Para muito poucos dados: usa janela mínima de 3 sorteios
+            janela_temporal = max(3, total_sorteios // 4)
+        
+        print(f"Janela temporal adaptativa: {janela_temporal} sorteios")
+        print(f"Features por amostra: {janela_temporal * 6} números")
+        
         # === CRIAÇÃO DO DATASET DE TREINAMENTO ===
-        # Começa no sorteio 10 (índice 10) porque precisa de 10 sorteios anteriores
-        for i in range(10, len(self.df)):
+        # Começa no sorteio janela_temporal porque precisa dos sorteios anteriores
+        samples_created = 0
+        for i in range(janela_temporal, len(self.df)):
             
             # === CONSTRUÇÃO DAS FEATURES (X) ===
-            # Para cada amostra, usa os 10 sorteios anteriores como features
+            # Para cada amostra, usa os sorteios anteriores como features
             feature_row = []
             
-            # Loop pelos 10 sorteios anteriores ao sorteio i
-            for j in range(10):
-                row_idx = i - 10 + j  # Índice do sorteio j dentro da janela
+            # Loop pelos sorteios anteriores ao sorteio i
+            for j in range(janela_temporal):
+                row_idx = i - janela_temporal + j  # Índice do sorteio j dentro da janela
                 
                 # Adiciona as 6 dezenas deste sorteio às features
                 for k in range(1, 7):
                     numero = self.df.iloc[row_idx][f'dezena_{k}']
                     feature_row.append(numero)
             
-            # feature_row agora tem 60 números (10 sorteios × 6 dezenas)
+            # feature_row agora tem (janela_temporal × 6) números
             features.append(feature_row)
+            samples_created += 1
             
             # === CONSTRUÇÃO DO TARGET (y) ===
-            # O target é o sorteio i (que vem após os 10 sorteios das features)
+            # O target é o sorteio i (que vem após a janela temporal das features)
             target_row = [self.df.iloc[i][f'dezena_{k}'] for k in range(1, 7)]
             targets.append(target_row)
         
         # Converte listas em arrays NumPy para uso no scikit-learn
-        features = np.array(features)  # Shape: (n_samples, 60)
+        features = np.array(features)  # Shape: (n_samples, janela_temporal * 6)
         targets = np.array(targets)    # Shape: (n_samples, 6)
         
         print(f"Dataset criado:")
         print(f"  Features shape: {features.shape}")
         print(f"  Targets shape: {targets.shape}")
-        print(f"  Amostras de treino: {len(features)}")
+        print(f"  Amostras de treino: {samples_created}")
+        print(f"  Aproveitamento dos dados: {(samples_created/total_sorteios)*100:.1f}%")
+        
+        # Verifica se temos dados suficientes para treinar
+        if samples_created < 10:
+            print("⚠️  AVISO: Poucos dados para treinamento confiável")
+            print("   Recomenda-se pelo menos 50 sorteios históricos")
         
         # === TREINAMENTO DE MÚLTIPLOS MODELOS ===
         # Treina um modelo separado para cada uma das 6 posições
@@ -869,17 +902,17 @@ class MegaSenaAnalyzer:
             print(f"    Score R² no teste: {score:.4f}")
             
             # === PREDIÇÃO PARA O PRÓXIMO SORTEIO ===
-            # Usa os últimos 10 sorteios como features para predição
-            last_10_features = []
+            # Usa os últimos janela_temporal sorteios como features para predição (consistente com o treinamento)
+            last_features = []
             
-            # Coleta os últimos 10 sorteios
-            for j in range(10):
-                row_idx = len(self.df) - 10 + j  # Últimos 10 sorteios
+            # Coleta os últimos janela_temporal sorteios
+            for j in range(janela_temporal):
+                row_idx = len(self.df) - janela_temporal + j  # Últimos janela_temporal sorteios
                 for k in range(1, 7):
-                    last_10_features.append(self.df.iloc[row_idx][f'dezena_{k}'])
+                    last_features.append(self.df.iloc[row_idx][f'dezena_{k}'])
             
             # Faz a predição
-            pred_raw = model.predict([last_10_features])[0]
+            pred_raw = model.predict([last_features])[0]
             
             # === PÓS-PROCESSAMENTO DA PREDIÇÃO ===
             # Garante que a predição está no range válido (1-60)
